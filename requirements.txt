@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+asyncpg
+psycopg[binary]
+pydantic-settings
+langgraph-checkpoint-postgres
+langchain
+langchain-google-genai
+opentelemetry-api
+opentelemetry-sdk
+langgraph
