@@ -35,14 +35,15 @@ class Chat_service:
         self.websocket = websocket
         self.thread_id = thread_id
         self.config = {"configurable": {"thread_id": thread_id}}
+        self.conn = None
 
     async def initialize(self):
         """Initialize the memory and graph asynchronously"""
         if self.memory is None:
             try:
                 conn_string = f"postgresql://{settings.DATABASE_USER}:{settings.DATABASE_PASSWORD}@{settings.DATABASE_HOST}:{settings.DATABASE_PORT}/{settings.DATABASE_NAME}"
-                conn = await psycopg.AsyncConnection.connect(conn_string, autocommit=True)
-                self.memory = AsyncPostgresSaver(conn)
+                self.conn = await psycopg.AsyncConnection.connect(conn_string, autocommit=True)
+                self.memory = AsyncPostgresSaver(self.conn)
                 await self.memory.setup()
                 self.graph = builder.compile(self.memory, interrupt_after=["ask_user_node"])
                 return True
@@ -109,8 +110,36 @@ class Chat_service:
             await self.websocket.send_json(map_file)
         except Exception as e:
             print(f"Error sending message: {str(e)}")
+    async def delete_conversations(self, user_id):
+        start = user_id.find("_")
+        user_id = user_id[0:start]
+        try:
+            
+            async with self.conn.transaction():
+                async with self.conn.cursor() as cur:
+                   tables = ["checkpoint_blobs", "checkpoint_writes", "checkpoints"]
+                   for table in tables:
+                        await cur.execute("SELECT COUNT(*) FROM " + table)
+                        count = await cur.fetchone()
+                        print(f"Table {table} row count before delete: {count[0]}")
 
+                   for table in tables:
+                        await cur.execute(
+                            f"DELETE FROM {table} WHERE thread_id LIKE %s",
+                            (f"%{user_id}%",)
+                        )
 
+                   for table in tables:
+                        await cur.execute("SELECT COUNT(*) FROM " + table)
+                        count = await cur.fetchone()
+                        print(f"Table {table} row count after delete: {count[0]}")
+                print("COnversations deleted successfully")
+                return True
+        except Exception as e:
+            print(f"Error during multi-table delete: {e}")
+            return False
+
+        
     async def chat(self, message: str, access_token: str, userid: str):
         """
         Process a chat message and stream the response through WebSocket
@@ -158,6 +187,10 @@ class Chat_service:
                             await self._process_stream_event(event)
                 else:
                     # Start a new conversation
+                    print("New conversation\n")
+                    print(self.config["configurable"]["thread_id"])
+                    results = await self.delete_conversations(self.config["configurable"]["thread_id"])
+                    print(results)
                     self.state = {
                         "messages": [HumanMessage(content=message)],
                         "access_token": access_token,
